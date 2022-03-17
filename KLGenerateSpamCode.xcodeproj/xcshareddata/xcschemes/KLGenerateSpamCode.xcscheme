@@ -56,16 +56,20 @@
             isEnabled = "YES">
          </CommandLineArgument>
          <CommandLineArgument
+            argument = "-debugDir /Users/oneko/Documents/Develop/ysdq-ios-old/Le123PhoneClient/Ninty/Router"
+            isEnabled = "YES">
+         </CommandLineArgument>
+         <CommandLineArgument
             argument = "-modifyClassNamePrefix /Users/oneko/Documents/Develop/ysdq-ios-old/Le123PhoneClient.xcodeproj DQ&gt;YYLa"
             isEnabled = "YES">
          </CommandLineArgument>
          <CommandLineArgument
-            argument = "-ignoreDirNames Extension,Ninty,Utility,Pods"
+            argument = "-ignoreDirNames Pods"
             isEnabled = "YES">
          </CommandLineArgument>
          <CommandLineArgument
             argument = "-handleXcassets"
-            isEnabled = "YES">
+            isEnabled = "NO">
          </CommandLineArgument>
       </CommandLineArguments>
    </LaunchAction>

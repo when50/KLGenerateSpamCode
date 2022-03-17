@@ -19,6 +19,10 @@ typedef NS_ENUM(NSInteger, GSCSourceType) {
     GSCSourceTypeClass,
     GSCSourceTypeCategory,
 };
+
+static NSMutableDictionary *classMap;
+static NSMutableSet *oldClassSet;
+
 NSMutableSet *findClassesName(NSString *filePath);
 void recursiveDirectory(NSString *directory, NSArray<NSString *> *ignoreDirNames, void(^handleMFile)(NSString *mFilePath), void(^handleSwiftFile)(NSString *swiftFilePath));
 void generateSpamCodeFile(NSString *outDirectory, NSString *mFilePath, GSCSourceType type, NSMutableString *categoryCallImportString, NSMutableString *categoryCallFuncString, NSMutableString *newClassCallImportString, NSMutableString *newClassCallFuncString);
@@ -28,6 +32,9 @@ void handleXcassetsFiles(NSString *directory);
 void deleteComments(NSString *directory, NSArray<NSString *> *ignoreDirNames);
 void modifyProjectName(NSString *projectDir, NSString *oldName, NSString *newName);
 void modifyClassNamePrefix(NSMutableString *projectContent, NSString *sourceCodeDir, NSArray<NSString *> *ignoreDirNames, NSString *oldName, NSString *newName);
+void updateText(NSString *sourceCodeDir, NSArray<NSString *> *ignoreDirNames, NSMutableDictionary *textMap, NSString *newPrefix);
+NSString *replaceContent(NSMutableString *content, NSString *oldText, NSString *newText);
+void save(NSString *path, NSString *content);
 
 NSString *gOutParameterName = nil;
 NSString *gSpamCodeFuncationCallName = nil;
@@ -135,6 +142,7 @@ int main(int argc, const char * argv[]) {
         NSString *projectFilePath = nil;
         NSString *oldClassNamePrefix = nil;
         NSString *newClassNamePrefix = nil;
+        NSString *debugDir = nil;
         
         NSFileManager *fm = [NSFileManager defaultManager];
         for (NSInteger i = 1; i < arguments.count; i++) {
@@ -265,6 +273,10 @@ int main(int argc, const char * argv[]) {
                 ignoreDirNames = [arguments[++i] componentsSeparatedByString:@","];
                 continue;
             }
+            if ([argument isEqualToString:@"-debugDir"]) {
+                debugDir = arguments[++i];
+                continue;
+            }
         }
         
         if (needHandleXcassets) {
@@ -298,6 +310,15 @@ int main(int argc, const char * argv[]) {
                 }
                 
                 modifyClassNamePrefix(projectContent, gSourceCodeDir, ignoreDirNames, oldClassNamePrefix, newClassNamePrefix);
+                if ([classMap.allKeys containsObject:@"BaiduMobAdNativeVideoView"] || [classMap.allKeys containsObject:@"BaiduMobAdNativeVideoBaseView"]) {
+                    NSLog(@"include framework");
+                    abort();
+                }
+                if (debugDir) {
+                    updateText(debugDir, ignoreDirNames, classMap, newClassNamePrefix);
+                } else {
+                    updateText(gSourceCodeDir, ignoreDirNames, classMap, newClassNamePrefix);
+                }
                 
                 [projectContent writeToFile:projectFilePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
             }
@@ -851,6 +872,22 @@ void modifyFilesClassName(NSString *sourceCodeDir, NSString *oldClassName, NSStr
 }
 
 void modifyFilesClassName1(NSString *sourceCodeDir, NSString *oldClassName, NSString *newClassName, NSArray *ignoreDirNames) {
+    if (classMap == nil) {
+        classMap = [NSMutableDictionary dictionary];
+        oldClassSet = [NSMutableSet set];
+    }
+    if (![oldClassSet containsObject:oldClassName]) {
+        [oldClassSet addObject:oldClassName];
+        [classMap setValue:newClassName forKey:oldClassName];
+        if (![newClassName hasSuffix:oldClassName] && ![oldClassName hasPrefix:@"DQ"]) {
+            NSLog(@"%@ must has suffix %@", newClassName, oldClassName);
+            abort();
+        }
+//        NSLog(@"oldClass: %@, newClass: %@", oldClassName, newClassName);
+    }
+}
+
+void modifyFilesClassName2(NSString *sourceCodeDir, NSString *oldClassName, NSString *newClassName, NSArray *ignoreDirNames) {
     NSLog(@"oldClass: %@, newClass: %@", oldClassName, newClassName);
     // 文件内容 Const > DDConst (h,m,swift,xib,storyboard)
     NSFileManager *fm = [NSFileManager defaultManager];
@@ -921,6 +958,128 @@ void modifyFilesClassName1(NSString *sourceCodeDir, NSString *oldClassName, NSSt
     }
 }
 
+void updateText(NSString *sourceCodeDir, NSArray<NSString *> *ignoreDirNames, NSMutableDictionary *textMap, NSString *newPrefix) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    
+    // 遍历源代码文件 h 与 m 配对，swift
+    NSArray<NSString *> *files = [fm contentsOfDirectoryAtPath:sourceCodeDir error:nil];
+    BOOL isDirectory;
+    for (NSString *filePath in files) {
+        if ([filePath containsString:@".framework"]) {
+            continue;
+        }
+        NSString *path = [sourceCodeDir stringByAppendingPathComponent:filePath];
+        if ([fm fileExistsAtPath:path isDirectory:&isDirectory] && isDirectory) {
+            if (![ignoreDirNames containsObject:filePath]) {
+                updateText(path, @[], textMap, newPrefix);
+            }
+            continue;
+        }
+        
+        NSString *fileName = filePath.lastPathComponent.stringByDeletingPathExtension;
+        NSString *fileExtension = filePath.pathExtension;
+        
+        if ([fileExtension isEqualToString:@"h"] || [fileExtension isEqualToString:@"xib"] || [fileExtension isEqualToString:@"m"] || [fileExtension isEqualToString:@"mm"]) {
+                NSString *replaceFile = [[sourceCodeDir stringByAppendingPathComponent:fileName] stringByAppendingPathExtension:fileExtension];
+            @autoreleasepool {
+                    NSError *error = nil;
+                    NSMutableString *fileContent = [NSMutableString stringWithContentsOfFile:replaceFile encoding:NSUTF8StringEncoding error:&error];
+                    if (error) {
+                        printf("打开文件 %s 失败：%s\n", path.UTF8String, error.localizedDescription.UTF8String);
+                        abort();
+                    }
+                    
+                    BOOL isChanged = NO;
+                    NSMutableString *newContent = nil;
+                    for (NSString *oldText in classMap.allKeys) {
+                        if ([fileExtension isEqualToString:@"xib"]) {
+                            NSString *regularExpression = [NSString stringWithFormat:@"\\b%@\\b", oldText];
+                            BOOL isUpdated = regularReplacement(fileContent, regularExpression, classMap[oldText]);
+                            if (isUpdated) {
+                                newContent = fileContent;
+                            } else {
+                                newContent = nil;
+                            }
+                        } else {
+                            newContent = replaceContent(fileContent, oldText, classMap[oldText]);
+                        }
+                        if (newContent) {
+                            isChanged = YES;
+                            fileContent = newContent;
+                        }
+                    }
+                if ([filePath hasSuffix:@"NTYRouter.m"]) {
+                    isChanged = YES;
+                    NSString *oldStr = @"factoryClassName = STRING(@\"";
+                    NSString *newStr = [NSString stringWithFormat:@"%@%@", oldStr, newPrefix];
+                    [fileContent replaceOccurrencesOfString:oldStr withString:newStr options:0 range:NSMakeRange(0, fileContent.length)];
+                }
+                    if (isChanged) {
+                        save(path, fileContent);
+                    }
+            }
+        }
+    }
+}
+
+NSMutableString *replaceContent(NSMutableString *content, NSString *oldText, NSString *newText) {
+    NSArray *lines = [content componentsSeparatedByString:@"\n"];
+    NSMutableArray *newLines = [NSMutableArray array];
+    for (NSString *line in lines) {
+        if ([line containsString:@"import"]) {
+            [newLines addObject:@""];
+        } else {
+            [newLines addObject:line];
+        }
+    }
+    content = [[newLines componentsJoinedByString:@"\n"] mutableCopy];
+    
+    NSString *str = [NSString stringWithFormat:@"\"%@", oldText];
+    [content replaceOccurrencesOfString:str withString:@"______" options:0 range:NSMakeRange(0, content.length)];
+    
+    NSString *regularExpression = [NSString stringWithFormat:@"\\b%@\\b", oldText];
+    BOOL isChanged = regularReplacement(content, regularExpression, newText);
+    if (isChanged) {
+        newLines = [[content componentsSeparatedByString:@"\n"] mutableCopy];
+    }
+    
+    [content replaceOccurrencesOfString:@"______" withString:str options:0 range:NSMakeRange(0, content.length)];
+    
+    
+    NSString *classStr = [NSString stringWithFormat:@"\"%@\"", oldText];
+    if ([content containsString:oldText]) {
+        isChanged = YES;
+    }
+    
+    if (isChanged) {
+//        NSLog(@"replace %@ to %@", oldText, newText);
+        newLines = [[content componentsSeparatedByString:@"\n"] mutableCopy];
+        int i = 0;
+        for (NSString *line in lines) {
+            if ([line containsString:@"import"]) {
+                newLines[i] = line;
+            }
+            i++;
+        }
+        content = [[newLines componentsJoinedByString:@"\n"] mutableCopy];
+        
+        NSString *newClassStr = [NSString stringWithFormat:@"\"%@\"", newText];
+        [content replaceOccurrencesOfString:classStr withString:newClassStr options:0 range:NSMakeRange(0, content.length)];
+        return content;
+    }
+    
+    return nil;
+}
+
+void save(NSString *path, NSString *content) {
+    NSError *error = nil;
+    [content writeToFile:path atomically:YES encoding:NSUTF8StringEncoding error:&error];
+    if (error) {
+        printf("保存文件 %s 失败：%s\n", path.UTF8String, error.localizedDescription.UTF8String);
+        abort();
+    }
+}
+
 void modifyClassNamePrefix(NSMutableString *projectContent, NSString *sourceCodeDir, NSArray<NSString *> *ignoreDirNames, NSString *oldName, NSString *newName) {
     NSFileManager *fm = [NSFileManager defaultManager];
     
@@ -928,6 +1087,9 @@ void modifyClassNamePrefix(NSMutableString *projectContent, NSString *sourceCode
     NSArray<NSString *> *files = [fm contentsOfDirectoryAtPath:sourceCodeDir error:nil];
     BOOL isDirectory;
     for (NSString *filePath in files) {
+        if ([filePath containsString:@".framework"]) {
+            continue;;
+        }
         NSString *path = [sourceCodeDir stringByAppendingPathComponent:filePath];
         if ([fm fileExistsAtPath:path isDirectory:&isDirectory] && isDirectory) {
             if (![ignoreDirNames containsObject:filePath]) {
@@ -935,7 +1097,6 @@ void modifyClassNamePrefix(NSMutableString *projectContent, NSString *sourceCode
             }
             continue;
         }
-        
         NSString *fileName = filePath.lastPathComponent.stringByDeletingPathExtension;
         NSString *fileExtension = filePath.pathExtension;
         NSString *newClassName;
@@ -980,15 +1141,22 @@ void modifyClassNamePrefix(NSMutableString *projectContent, NSString *sourceCode
 //                    [classNames addObject:fileName];
                     NSString *nnewClassName;
                     for (NSString *oldClassName in classNames) {
-                        if ([oldClassName hasPrefix:@"NS"] || [oldClassName hasPrefix:@"UI"]) {
+                        if ([oldClassName hasPrefix:@"NS"] || [oldClassName hasPrefix:@"UI"] || [oldClassName isEqualToString:@"JSONValueTransformer"]) {
                             continue;
                         }
-                        if ([oldClassName hasPrefix:oldName]) {
-                            nnewClassName = [newName stringByAppendingString:[oldClassName substringFromIndex:oldName.length]];
-                        } else {
-                            nnewClassName = [newName stringByAppendingString:oldClassName];
+                        
+                        
+                        NSString *validClassName = oldClassName;
+                        if ([validClassName containsString:@"<"]) {
+                            validClassName = [validClassName componentsSeparatedByString:@"<"].firstObject;
                         }
-                        modifyFilesClassName1(gSourceCodeDir, fileName, nnewClassName, ignoreDirNames);
+                        
+                        if ([validClassName hasPrefix:oldName]) {
+                            nnewClassName = [newName stringByAppendingString:[validClassName substringFromIndex:oldName.length]];
+                        } else {
+                            nnewClassName = [newName stringByAppendingString:validClassName];
+                        }
+                        modifyFilesClassName1(gSourceCodeDir, validClassName, nnewClassName, ignoreDirNames);
                     }
                 }
             } else {
