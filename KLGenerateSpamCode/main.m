@@ -299,7 +299,7 @@ int main(int argc, const char * argv[]) {
             printf("修改工程名完成\n");
         }
         if (oldClassNamePrefix && newClassNamePrefix) {
-            printf("开始修改类名前缀...\n");
+            NSLog(@"开始修改类名前缀...\n");
             @autoreleasepool {
                 // 打开工程文件
                 NSError *error = nil;
@@ -322,7 +322,7 @@ int main(int argc, const char * argv[]) {
                 
                 [projectContent writeToFile:projectFilePath atomically:YES encoding:NSUTF8StringEncoding error:nil];
             }
-            printf("修改类名前缀完成\n");
+            NSLog(@"修改类名前缀完成\n");
         }
         if (outDirString) {
             NSMutableString *categoryCallImportString = [NSMutableString string];
